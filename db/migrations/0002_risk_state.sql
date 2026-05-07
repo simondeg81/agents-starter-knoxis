@@ -1,0 +1,2 @@
+-- Placeholder — W1 (feature/risk-engine) replaces with risk state schema.
+-- DO NOT modify in any other window.
