@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx tests/*.test.ts",
     "start": "npx tsx src/index.ts",
     "demo": "npx tsx src/demo.ts",
     "dashboard": "npx tsx src/dashboard.ts",
@@ -16,8 +18,7 @@
     "iterate:analyze": "npx tsx src/strategies/iterate.ts analyze",
     "iterate:markets": "npx tsx src/strategies/iterate.ts markets",
     "redeem": "npx tsx src/core/limitless/redeem.ts",
-    "conviction-sniper": "tsx src/strategies/conviction-sniper/run.ts",
-    "test": "node --import tsx --test src/risk/gates/__tests__/per-trade-size.test.ts"
+    "conviction-sniper": "tsx src/strategies/conviction-sniper/run.ts"
   },
   "keywords": [
     "prediction-markets",
@@ -29,7 +30,7 @@
   "author": "Limitless Labs",
   "license": "MIT",
   "dependencies": {
-    "@types/better-sqlite3": "^7.6.10",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "better-sqlite3": "^11.3.0",
     "cross-fetch": "^4.1.0",
