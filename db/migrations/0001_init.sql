@@ -50,16 +50,8 @@ CREATE TABLE daily_pnl (
     PRIMARY KEY (utc_date, strategy)
 );
 
--- Risk halts (cleared_at_ns IS NULL means currently active)
-CREATE TABLE risk_halts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    halted_at_ns INTEGER NOT NULL,
-    reason TEXT NOT NULL,             -- 'daily_loss_cap' | 'drawdown' | 'adverse_selection' | 'manual' | etc.
-    details_json TEXT,                -- JSON with extra context
-    cleared_at_ns INTEGER,            -- NULL while halt is active
-    cleared_by TEXT,                  -- 'manual' | 'auto-utc-rollover' | etc.
-    cleared_reason TEXT
-);
+-- risk_halts table moved to 0002_risk_state.sql (owned by W1 / risk engine)
+-- v_active_halts view also defined in 0002
 
 -- Council proposals (AI Council parameter suggestions awaiting Simon approval)
 CREATE TABLE council_proposals (
@@ -74,9 +66,6 @@ CREATE TABLE council_proposals (
     decided_by TEXT                   -- 'simon' | 'auto-expire'
 );
 
--- View: currently active halts
-CREATE VIEW v_active_halts AS
-    SELECT * FROM risk_halts WHERE cleared_at_ns IS NULL;
 
 -- Indices
 CREATE INDEX idx_trade_events_timestamp ON trade_events(timestamp_ns);
@@ -86,4 +75,3 @@ CREATE INDEX idx_trade_events_outcome ON trade_events(strategy, outcome) WHERE o
 CREATE INDEX idx_positions_strategy ON positions(strategy);
 CREATE INDEX idx_daily_pnl_date ON daily_pnl(utc_date);
 CREATE INDEX idx_council_proposals_status ON council_proposals(status, proposed_at_ns);
-CREATE INDEX idx_risk_halts_active ON risk_halts(cleared_at_ns) WHERE cleared_at_ns IS NULL;
