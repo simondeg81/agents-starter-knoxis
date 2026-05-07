@@ -1,6 +1,5 @@
-// Placeholder — W1 (feature/risk-engine) replaces with full implementation
-// per EXTENSIONS_DESIGN.md risk gate API contract.
-// DO NOT modify in any other window.
+// W1 — risk gate API contract per EXTENSIONS_DESIGN.md
+// All strategies depend on this file. Keep exports stable.
 
 export interface ProposedOrder {
   strategy: string;
@@ -22,4 +21,37 @@ export interface RiskGate {
   evaluate(order: ProposedOrder): Promise<RiskGateDecision>;
   isHalted(): Promise<{ halted: boolean; reason?: string }>;
   recordOutcome(orderId: string, outcome: 'win' | 'loss' | 'cancel'): Promise<void>;
+}
+
+export interface RiskConfig {
+  liveBetMax: number;
+  liveLossCap: number;
+  drawdownHaltPct: number;
+  correlationGroupCap: number;
+  adverseHaltLosses: number;
+  volRegimeHighFactor: number;
+  pythConfGatePct: number;
+  maxTotalExposureUsd: number;
+  dbPath: string;
+}
+
+export interface ActiveHalt {
+  haltId: number;
+  haltedAtNs: number;
+  reason: string;
+  blockingGate: string;
+  detailsJson?: string;
+}
+
+export type Outcome = 'win' | 'loss' | 'cancel';
+
+export interface RiskState {
+  getOpenPositionsSumUsd(asset?: string): Promise<number>;
+  getDailyPnlUsd(): Promise<number>;
+  getDailyPeakEquityUsd(): Promise<number>;
+  getCurrentEquityUsd(): Promise<number>;
+  getLastOutcomes(n: number): Promise<Outcome[]>;
+  getActiveHalts(): Promise<ActiveHalt[]>;
+  insertHalt(reason: string, blockingGate: string, details?: object): Promise<void>;
+  recordTradeOutcome(orderId: string, outcome: Outcome): Promise<void>;
 }

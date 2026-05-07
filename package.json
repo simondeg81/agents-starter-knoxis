@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx tests/*.test.ts",
     "start": "npx tsx src/index.ts",
     "demo": "npx tsx src/demo.ts",
     "dashboard": "npx tsx src/dashboard.ts",
@@ -28,7 +30,9 @@
   "author": "Limitless Labs",
   "license": "MIT",
   "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "better-sqlite3": "^11.3.0",
     "cross-fetch": "^4.1.0",
     "dotenv": "^16.4.0",
     "eventsource": "^4.1.0",

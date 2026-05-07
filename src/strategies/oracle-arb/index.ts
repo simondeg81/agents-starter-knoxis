@@ -6,6 +6,7 @@ import { createPublicClient, http, parseAbi, formatUnits, PublicClient } from 'v
 import { base } from 'viem/chains';
 import fs from 'fs/promises';
 import path from 'path';
+import type { ProposedOrder, RiskGate } from '../../risk/types.js';
 
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 
@@ -25,6 +26,20 @@ function getNextRpc(): string {
     return url;
 }
 
+// W4 extension: timeframe slug pattern matching
+function slugMatchesTimeframe(slug: string, allowedTimeframes: string[]): boolean {
+    if (allowedTimeframes.includes('1h') && /-up-or-down-1-hour-/.test(slug)) return true;
+    if (allowedTimeframes.includes('15m') && /-up-or-down-15-minutes?-/.test(slug)) return true;
+    if (allowedTimeframes.includes('5m') && /-up-or-down-5-minutes?-/.test(slug)) return true;
+    return false;
+}
+
+function extractTimeframeFromSlug(slug: string): '5m' | '15m' | '1h' {
+    if (/-up-or-down-5-minutes?-/.test(slug)) return '5m';
+    if (/-up-or-down-15-minutes?-/.test(slug)) return '15m';
+    return '1h';
+}
+
 export interface OracleArbConfig extends StrategyConfig {
     assets: string[]; // e.g., ['BTC', 'ETH', 'SOL']
     minConfidencePercent: number; // Min oracle confidence (0-1)
@@ -35,6 +50,7 @@ export interface OracleArbConfig extends StrategyConfig {
     maxPositions: number; // Max concurrent positions
     minMinutesToExpiry: number; // Min time before market expires
     maxMinutesToExpiry: number; // Max time before market expires
+    timeframes?: string[]; // W4 extension: e.g., ['1h']; subset of ['5m','15m','1h']
 }
 
 interface PositionRecord {
@@ -57,15 +73,20 @@ export class OracleArbStrategy extends BaseStrategy {
     private portfolioBalance: number = 0;
     private lastBalanceCheck: number = 0;
     private tickCount: number = 0;
+    // W4 extension: optional during Pass 2; Pass 3 will wire it via run.ts
+    private riskGate?: RiskGate;
+    // W4 extension: per-decision metadata for risk-gate ProposedOrder construction
+    private decisionMetadata = new Map<string, { asset: string; timeframe: '5m' | '15m' | '1h'; pythPrice: number; pythConfidence: number }>();
 
     private baseIntervalMs: number = 10000;
     private goldenIntervalMs: number = 3000;
 
     constructor(
         config: StrategyConfig,
-        deps: { limitless: LimitlessClient; trading: TradingClient }
+        deps: { limitless: LimitlessClient; trading: TradingClient; riskGate?: RiskGate }
     ) {
         super(config, deps);
+        this.riskGate = deps.riskGate;
         this.hermes = new HermesClient();
         this.baseIntervalMs = 10000; // Normal: scan every 10s
         this.goldenIntervalMs = 3000; // Golden window: scan every 3s
@@ -248,12 +269,15 @@ export class OracleArbStrategy extends BaseStrategy {
 
                 // Search for markets with this asset
                 const markets = await this.limitless.searchMarkets(asset, { limit: 50 });
-                this.logger.debug({ asset, count: markets.length }, 'Found markets');
+                // W4 extension: filter by configured timeframes (default ['1h'])
+                const allowedTimeframes = (this.config as OracleArbConfig).timeframes ?? ['1h'];
+                const filteredMarkets = markets.filter(m => slugMatchesTimeframe(m.slug, allowedTimeframes));
+                this.logger.debug({ asset, count: markets.length, filtered: filteredMarkets.length, allowedTimeframes }, 'Found markets');
 
                 let validMarkets = 0;
                 let skippedMarkets = 0;
 
-                for (const market of markets) {
+                for (const market of filteredMarkets) {
                     // Skip if already traded
                     if (this.tradedMarkets.has(market.slug)) {
                         skippedMarkets++;
@@ -385,6 +409,14 @@ export class OracleArbStrategy extends BaseStrategy {
                             amountUsd: config.betSizeUsd,
                         });
 
+                        // W4: capture metadata for risk-gate ProposedOrder construction
+                        this.decisionMetadata.set(market.slug, {
+                            asset,
+                            timeframe: extractTimeframeFromSlug(market.slug),
+                            pythPrice: oraclePrice,
+                            pythConfidence: oracleConf,
+                        });
+
                         this.tradedMarkets.add(market.slug);
                         await this.savePositions();
                     }
@@ -466,6 +498,14 @@ export class OracleArbStrategy extends BaseStrategy {
                             amountUsd: config.betSizeUsd,
                         });
 
+                        // W4: capture metadata for risk-gate ProposedOrder construction
+                        this.decisionMetadata.set(market.slug, {
+                            asset,
+                            timeframe: extractTimeframeFromSlug(market.slug),
+                            pythPrice: oraclePrice,
+                            pythConfidence: oracleConf,
+                        });
+
                         this.tradedMarkets.add(market.slug);
                         await this.savePositions();
                     }
@@ -514,11 +554,63 @@ export class OracleArbStrategy extends BaseStrategy {
     }
 
     /**
-     * Override executeDecisions to add auto-approval logic
+     * W4 extension: gate on DRY_RUN (W3 landmine L2 fix) and call RiskGate before any
+     * placeOrder. Auto-approval logic preserved from upstream.
      */
     protected async executeDecisions(decisions: TradeDecision[]): Promise<void> {
+        // W3 landmine L2 fix: gate on DRY_RUN at the TOP of executeDecisions
+        if (process.env.DRY_RUN === 'true') {
+            this.logger.info({
+                strategy: 'oracle-arb',
+                decisions: decisions.map(d => ({
+                    marketSlug: d.marketSlug,
+                    action: d.action,
+                    side: d.side,
+                    amountUsd: d.amountUsd,
+                    priceLimit: d.priceLimit,
+                })),
+            }, '[oracle-arb][DRY_RUN] would execute');
+            // TODO(W5): once observability event-bus lands, replace with:
+            //   eventBus.emit('strategy.dry_run', { strategy: 'oracle-arb', decisions });
+            return;
+        }
+
         for (const decision of decisions) {
             if (decision.action === 'SKIP') continue;
+
+            // W4: risk gate evaluation before any order placement
+            if (this.riskGate) {
+                const meta = this.decisionMetadata.get(decision.marketSlug);
+                const proposedOrder: ProposedOrder = {
+                    strategy: 'oracle-arb',
+                    marketSlug: decision.marketSlug,
+                    asset: meta?.asset ?? 'UNKNOWN',
+                    timeframe: meta?.timeframe ?? '1h',
+                    side: decision.side === 'YES'
+                        ? (decision.action === 'BUY' ? 'yes_buy' : 'yes_sell')
+                        : (decision.action === 'BUY' ? 'no_buy' : 'no_sell'),
+                    price: decision.priceLimit / 100,
+                    sizeUsd: decision.amountUsd,
+                    pythPrice: meta?.pythPrice,
+                    pythConfidence: meta?.pythConfidence,
+                };
+                const riskDecision = await this.riskGate.evaluate(proposedOrder);
+                if (!riskDecision.ok) {
+                    this.logger.warn({
+                        marketSlug: decision.marketSlug,
+                        reason: riskDecision.reason,
+                        blockingGate: riskDecision.blockingGate,
+                    }, '[oracle-arb][risk-block]');
+                    // TODO(W5): once observability event-bus lands, replace with:
+                    //   eventBus.emit('strategy.risk_block', { strategy: 'oracle-arb', order: proposedOrder, reason: riskDecision.reason });
+                    continue;
+                }
+            } else {
+                // TODO(W1+Pass3): once feature/risk-engine merges, riskGate will be wired
+                // by run.ts and this branch becomes unreachable. Until then, log so we know
+                // which decisions would have been gate-checked.
+                this.logger.warn({ marketSlug: decision.marketSlug }, '[oracle-arb] riskGate not wired (Pass2) - proceeding without risk evaluation');
+            }
 
             try {
                 this.logger.info({ decision }, 'Executing trade decision');

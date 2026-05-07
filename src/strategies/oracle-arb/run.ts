@@ -45,7 +45,7 @@ async function main() {
         process.exit(1);
     }
 
-    const dryRun = process.env.DRY_RUN !== 'false';
+    const dryRun = process.env.DRY_RUN === 'true';  // W4: aligned with executor gate semantics
     console.log(`🤖 Oracle Arb Strategy`);
     console.log(`   Mode: ${dryRun ? 'DRY RUN (no trades)' : 'LIVE TRADING'}`);
     console.log(`   Set DRY_RUN=false to enable real orders`);
@@ -79,6 +79,8 @@ async function main() {
         maxMarketPrice: parseFloat(process.env.ORACLE_MAX_PRICE || '0.65'),
         // Bet size per trade in USD
         betSizeUsd: parseFloat(process.env.ORACLE_BET_SIZE || '1'),
+        // W4 extension: which Limitless market timeframes to scan
+        timeframes: (process.env.ORACLE_TIMEFRAMES || '1h').split(',').map(s => s.trim()),
         // Max concurrent positions
         maxPositions: parseInt(process.env.ORACLE_MAX_POSITIONS || '10'),
         // Only trade markets expiring in this window (minutes)
@@ -94,6 +96,7 @@ async function main() {
         minPrice: strategyConfig.minMarketPrice,
         maxPrice: strategyConfig.maxMarketPrice,
         betSize: strategyConfig.betSizeUsd,
+        timeframes: strategyConfig.timeframes,
     }, 'Strategy config');
 
     // Create and start strategy
