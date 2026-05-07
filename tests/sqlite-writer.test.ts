@@ -12,8 +12,10 @@ function makeDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('journal_mode = MEMORY');
   db.pragma('foreign_keys = ON');
-  const sql = readFileSync(resolve(process.cwd(), 'db/migrations/0001_init.sql'), 'utf8');
-  db.exec(sql);
+  const sql0001 = readFileSync(resolve(process.cwd(), 'db/migrations/0001_init.sql'), 'utf8');
+  const sql0002 = readFileSync(resolve(process.cwd(), 'db/migrations/0002_risk_state.sql'), 'utf8');
+  db.exec(sql0001);
+  db.exec(sql0002);
   return db;
 }
 
