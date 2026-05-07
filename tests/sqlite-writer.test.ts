@@ -175,30 +175,6 @@ test('strategy.dry_run writes a submit row with is_dry_run=1', () => {
   assert.equal(row.is_dry_run, 1);
 });
 
-test('risk.halt then risk.unhalt clears via v_active_halts', () => {
-  const db = makeDb();
-  const bus = new TypedEventBus();
-  new SqliteWriter(db).attach(bus);
-
-  bus.emit('risk.halt', {
-    timestampNs: 1_700_000_000_000_000_000n,
-    reason: 'daily_loss_cap',
-    blockingGate: 'daily-loss',
-    details: { pnlUsd: -55 },
-  });
-
-  let active = db.prepare(`SELECT count(*) AS n FROM v_active_halts`).get() as any;
-  assert.equal(active.n, 1);
-
-  bus.emit('risk.unhalt', {
-    timestampNs: 1_700_000_003_600_000_000n,
-    clearedBy: 'auto-utc-rollover',
-    clearedReason: 'rollover',
-  });
-
-  active = db.prepare(`SELECT count(*) AS n FROM v_active_halts`).get() as any;
-  assert.equal(active.n, 0);
-});
 
 test('council.proposal inserts a pending proposal', () => {
   const db = makeDb();

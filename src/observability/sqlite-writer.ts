@@ -56,9 +56,9 @@ export class SqliteWriter {
   private upsertPosition!: Stmt;
   private deletePosition!: Stmt;
   private bumpDailyPnl!: Stmt;
-  private insertHalt!: Stmt;
-  private clearHaltById!: Stmt;
-  private clearAllActiveHalts!: Stmt;
+  // DEPRECATED Pass 4: bus-path risk_halts WRITE removed. Direct-SQL in
+  // src/risk/state.ts is canonical; bus subscription is kept for
+  // notification observers (Telegram, dashboard) only.
   private insertProposal!: Stmt;
   private detached: Array<() => void> = [];
 
@@ -115,26 +115,8 @@ export class SqliteWriter {
         n_risk_blocks    = n_risk_blocks    + excluded.n_risk_blocks
     `);
 
-    this.insertHalt = this.db.prepare(`
-      INSERT INTO risk_halts (halted_at_ns, reason, blocking_gate, details_json)
-      VALUES (@haltedAtNs, @reason, @blockingGate, @detailsJson)
-    `);
-
-    this.clearHaltById = this.db.prepare(`
-      UPDATE risk_halts
-      SET cleared_at_ns = @clearedAtNs,
-          cleared_by    = @clearedBy,
-          cleared_reason = @clearedReason
-      WHERE halt_id = @haltId AND cleared_at_ns IS NULL
-    `);
-
-    this.clearAllActiveHalts = this.db.prepare(`
-      UPDATE risk_halts
-      SET cleared_at_ns = @clearedAtNs,
-          cleared_by    = @clearedBy,
-          cleared_reason = @clearedReason
-      WHERE cleared_at_ns IS NULL
-    `);
+    // DEPRECATED Pass 4: prepares for risk_halts WRITE removed.
+    // Canonical writer is src/risk/state.ts (direct SQL).
 
     this.insertProposal = this.db.prepare(`
       INSERT INTO council_proposals (
@@ -415,31 +397,16 @@ export class SqliteWriter {
   }
 
   private handleHalt(e: RiskHaltEvent): void {
-    const ts = nsToBigInt(e.timestampNs);
-    this.insertHalt.run({
-      haltedAtNs:   nsForSqlite(ts),
-      reason:       e.reason,
-      blockingGate: e.blockingGate,
-      detailsJson:  e.details ? JSON.stringify(e.details) : null,
-    });
+    // DEPRECATED Pass 4: halt WRITE is canonical via direct-SQL in
+    // src/risk/state.ts. Bus subscription kept for notification
+    // observers (Telegram, dashboard) that still consume the event.
+    console.log('[observability] risk.halt event observed (write handled by risk engine):', e.reason);
   }
 
   private handleUnhalt(e: RiskUnhaltEvent): void {
-    const ts = nsToBigInt(e.timestampNs);
-    if (e.haltId !== undefined) {
-      this.clearHaltById.run({
-        haltId: e.haltId,
-        clearedAtNs: nsForSqlite(ts),
-        clearedBy: e.clearedBy,
-        clearedReason: e.clearedReason ?? null,
-      });
-    } else {
-      this.clearAllActiveHalts.run({
-        clearedAtNs: nsForSqlite(ts),
-        clearedBy: e.clearedBy,
-        clearedReason: e.clearedReason ?? null,
-      });
-    }
+    // DEPRECATED Pass 4: see handleHalt above. Bus subscription kept;
+    // unhalt WRITE is canonical via direct-SQL in src/risk/state.ts.
+    console.log('[observability] risk.unhalt event observed (write handled by risk engine):', e.clearedBy);
   }
 
   private handleProposal(e: CouncilProposalEvent): void {
