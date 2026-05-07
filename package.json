@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx tests/*.test.ts",
+    "test": "node --import tsx --test src/risk/gates/__tests__/per-trade-size.test.ts src/strategies/maker-complement/__tests__/quote-engine.test.ts src/strategies/oracle-arb/__tests__/dry-run-gating.test.ts src/council/__tests__/key-isolation-check.test.ts tests/event-bus.test.ts tests/sqlite-writer.test.ts tests/venues.test.ts",
     "start": "npx tsx src/index.ts",
     "demo": "npx tsx src/demo.ts",
     "dashboard": "npx tsx src/dashboard.ts",
