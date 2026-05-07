@@ -7,6 +7,7 @@ import { base } from 'viem/chains';
 import fs from 'fs/promises';
 import path from 'path';
 import type { ProposedOrder, RiskGate } from '../../risk/types.js';
+import { eventBus } from '../../observability/event-bus.js';
 
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 
@@ -570,8 +571,26 @@ export class OracleArbStrategy extends BaseStrategy {
                     priceLimit: d.priceLimit,
                 })),
             }, '[oracle-arb][DRY_RUN] would execute');
-            // TODO(W5): once observability event-bus lands, replace with:
-            //   eventBus.emit('strategy.dry_run', { strategy: 'oracle-arb', decisions });
+            const tsNs = BigInt(Date.now()) * 1_000_000n;
+            for (const d of decisions) {
+                if (d.action === 'SKIP') continue;
+                const meta = this.decisionMetadata.get(d.marketSlug);
+                eventBus.emit('strategy.dry_run', {
+                    timestampNs: tsNs,
+                    strategy: 'oracle-arb',
+                    marketSlug: d.marketSlug,
+                    asset: meta?.asset ?? 'UNKNOWN',
+                    timeframe: meta?.timeframe ?? '1h',
+                    isDryRun: true,
+                    side: d.side === 'YES'
+                        ? (d.action === 'BUY' ? 'yes_buy' : 'yes_sell')
+                        : (d.action === 'BUY' ? 'no_buy' : 'no_sell'),
+                    price: d.priceLimit / 100,
+                    sizeUsd: d.amountUsd,
+                    pythPrice: meta?.pythPrice,
+                    pythConfidence: meta?.pythConfidence,
+                });
+            }
             return;
         }
 
@@ -601,8 +620,18 @@ export class OracleArbStrategy extends BaseStrategy {
                         reason: riskDecision.reason,
                         blockingGate: riskDecision.blockingGate,
                     }, '[oracle-arb][risk-block]');
-                    // TODO(W5): once observability event-bus lands, replace with:
-                    //   eventBus.emit('strategy.risk_block', { strategy: 'oracle-arb', order: proposedOrder, reason: riskDecision.reason });
+                    eventBus.emit('strategy.risk_block', {
+                        timestampNs: BigInt(Date.now()) * 1_000_000n,
+                        strategy: 'oracle-arb',
+                        marketSlug: decision.marketSlug,
+                        asset: proposedOrder.asset,
+                        timeframe: proposedOrder.timeframe,
+                        isDryRun: false,
+                        side: proposedOrder.side,
+                        price: proposedOrder.price,
+                        sizeUsd: proposedOrder.sizeUsd,
+                        riskBlockReason: riskDecision.reason,
+                    });
                     continue;
                 }
             } else {
@@ -630,6 +659,24 @@ export class OracleArbStrategy extends BaseStrategy {
                             });
                         }
                         this.logger.info({ marketSlug: decision.marketSlug, ladder }, 'FOK orders submitted');
+                        {
+                            const _meta = this.decisionMetadata.get(decision.marketSlug);
+                            eventBus.emit('strategy.submit', {
+                                timestampNs: BigInt(Date.now()) * 1_000_000n,
+                                strategy: 'oracle-arb',
+                                marketSlug: decision.marketSlug,
+                                asset: _meta?.asset ?? 'UNKNOWN',
+                                timeframe: _meta?.timeframe ?? '1h',
+                                isDryRun: false,
+                                side: decision.side === 'YES'
+                                    ? (decision.action === 'BUY' ? 'yes_buy' : 'yes_sell')
+                                    : (decision.action === 'BUY' ? 'no_buy' : 'no_sell'),
+                                price: decision.priceLimit / 100,
+                                sizeUsd: decision.amountUsd,
+                                pythPrice: _meta?.pythPrice,
+                                pythConfidence: _meta?.pythConfidence,
+                            });
+                        }
                         await this.logTrade(decision, true);
                     } catch (error: any) {
                         const errMsg = error?.message || String(error);
@@ -654,6 +701,24 @@ export class OracleArbStrategy extends BaseStrategy {
                                     });
                                 }
                                 this.logger.info({ marketSlug: decision.marketSlug, ladder }, 'FOK orders submitted after approval');
+                                {
+                                    const _meta = this.decisionMetadata.get(decision.marketSlug);
+                                    eventBus.emit('strategy.submit', {
+                                        timestampNs: BigInt(Date.now()) * 1_000_000n,
+                                        strategy: 'oracle-arb',
+                                        marketSlug: decision.marketSlug,
+                                        asset: _meta?.asset ?? 'UNKNOWN',
+                                        timeframe: _meta?.timeframe ?? '1h',
+                                        isDryRun: false,
+                                        side: decision.side === 'YES'
+                                            ? (decision.action === 'BUY' ? 'yes_buy' : 'yes_sell')
+                                            : (decision.action === 'BUY' ? 'no_buy' : 'no_sell'),
+                                        price: decision.priceLimit / 100,
+                                        sizeUsd: decision.amountUsd,
+                                        pythPrice: _meta?.pythPrice,
+                                        pythConfidence: _meta?.pythConfidence,
+                                    });
+                                }
                                 await this.logTrade(decision, true);
                             } catch (approvalError: any) {
                                 this.logger.error({ err: approvalError?.message, marketSlug: decision.marketSlug }, 'Auto-approval failed');

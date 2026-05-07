@@ -20,6 +20,7 @@ import { BaseStrategy, StrategyConfig, TradeDecision } from '../base-strategy.js
 import { LimitlessClient } from '../../core/limitless/markets.js';
 import { TradingClient } from '../../core/limitless/trading.js';
 import type { ProposedOrder, RiskGate } from '../../risk/types.js';
+import { eventBus } from '../../observability/event-bus.js';
 import { computeTargetQuotes, shouldRequote } from './quote-engine.js';
 import { InventoryModel, Side } from './inventory-model.js';
 
@@ -181,8 +182,21 @@ export class MakerComplementStrategy extends BaseStrategy {
                     postOnly: d.postOnly,
                 })),
             }, '[maker-complement][DRY_RUN] would execute');
-            // TODO(W5): once observability event-bus lands, replace with:
-            //   eventBus.emit('strategy.dry_run', { strategy: 'maker-complement', decisions });
+            const tsNs = BigInt(Date.now()) * 1_000_000n;
+            for (const d of decisions) {
+                if (d.action === 'SKIP') continue;
+                eventBus.emit('strategy.dry_run', {
+                    timestampNs: tsNs,
+                    strategy: 'maker-complement',
+                    marketSlug: d.marketSlug,
+                    asset: extractAsset(d.marketSlug),
+                    timeframe: extractTimeframe(d.marketSlug),
+                    isDryRun: true,
+                    side: d.side === 'YES' ? 'yes_buy' : 'no_buy',
+                    price: d.priceLimit / 100,
+                    sizeUsd: d.amountUsd,
+                });
+            }
             return;
         }
 
@@ -208,7 +222,18 @@ export class MakerComplementStrategy extends BaseStrategy {
                         reason: gateDecision.reason,
                         blockingGate: gateDecision.blockingGate,
                     }, '[maker-complement][risk-block]');
-                    // TODO(W5): once observability event-bus lands, emit risk_block.
+                    eventBus.emit('strategy.risk_block', {
+                        timestampNs: BigInt(Date.now()) * 1_000_000n,
+                        strategy: 'maker-complement',
+                        marketSlug: decision.marketSlug,
+                        asset: proposed.asset,
+                        timeframe: proposed.timeframe,
+                        isDryRun: false,
+                        side: proposed.side,
+                        price: proposed.price,
+                        sizeUsd: proposed.sizeUsd,
+                        riskBlockReason: gateDecision.reason,
+                    });
                     continue;
                 }
             } else {
@@ -242,6 +267,18 @@ export class MakerComplementStrategy extends BaseStrategy {
                     amountUsd: decision.amountUsd,
                     orderId,
                 }, 'maker-complement quote posted');
+                eventBus.emit('strategy.submit', {
+                    timestampNs: BigInt(Date.now()) * 1_000_000n,
+                    strategy: 'maker-complement',
+                    marketSlug: decision.marketSlug,
+                    asset: extractAsset(decision.marketSlug),
+                    timeframe: extractTimeframe(decision.marketSlug),
+                    isDryRun: false,
+                    side: decision.side === 'YES' ? 'yes_buy' : 'no_buy',
+                    price: decision.priceLimit / 100,
+                    sizeUsd: decision.amountUsd,
+                    orderId,
+                });
             } catch (err: any) {
                 this.logger.warn({
                     err: err?.message,
