@@ -183,6 +183,7 @@ test('risk.halt then risk.unhalt clears via v_active_halts', () => {
   bus.emit('risk.halt', {
     timestampNs: 1_700_000_000_000_000_000n,
     reason: 'daily_loss_cap',
+    blockingGate: 'daily-loss',
     details: { pnlUsd: -55 },
   });
 

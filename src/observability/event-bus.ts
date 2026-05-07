@@ -79,6 +79,7 @@ export interface StrategyResolveEvent extends BaseStrategyEvent {
 export interface RiskHaltEvent {
   timestampNs: bigint;
   reason: string;            // 'daily_loss_cap' | 'drawdown' | 'adverse_selection' | 'manual' | ...
+  blockingGate: string;      // matches RiskGateDecision.blockingGate; required for risk_halts.blocking_gate NOT NULL
   details?: Record<string, unknown>;
 }
 

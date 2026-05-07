@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS risk_halts (
     reason         TEXT NOT NULL,
     blocking_gate  TEXT NOT NULL,
     details_json   TEXT,
-    cleared_reason TEXT
+    cleared_reason TEXT,
+    cleared_by     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_risk_halts_halted_at  ON risk_halts(halted_at_ns);

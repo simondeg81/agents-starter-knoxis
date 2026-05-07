@@ -116,8 +116,8 @@ export class SqliteWriter {
     `);
 
     this.insertHalt = this.db.prepare(`
-      INSERT INTO risk_halts (halted_at_ns, reason, details_json)
-      VALUES (@haltedAtNs, @reason, @detailsJson)
+      INSERT INTO risk_halts (halted_at_ns, reason, blocking_gate, details_json)
+      VALUES (@haltedAtNs, @reason, @blockingGate, @detailsJson)
     `);
 
     this.clearHaltById = this.db.prepare(`
@@ -125,7 +125,7 @@ export class SqliteWriter {
       SET cleared_at_ns = @clearedAtNs,
           cleared_by    = @clearedBy,
           cleared_reason = @clearedReason
-      WHERE id = @id AND cleared_at_ns IS NULL
+      WHERE halt_id = @haltId AND cleared_at_ns IS NULL
     `);
 
     this.clearAllActiveHalts = this.db.prepare(`
@@ -417,9 +417,10 @@ export class SqliteWriter {
   private handleHalt(e: RiskHaltEvent): void {
     const ts = nsToBigInt(e.timestampNs);
     this.insertHalt.run({
-      haltedAtNs: nsForSqlite(ts),
-      reason:     e.reason,
-      detailsJson: e.details ? JSON.stringify(e.details) : null,
+      haltedAtNs:   nsForSqlite(ts),
+      reason:       e.reason,
+      blockingGate: e.blockingGate,
+      detailsJson:  e.details ? JSON.stringify(e.details) : null,
     });
   }
 
@@ -427,7 +428,7 @@ export class SqliteWriter {
     const ts = nsToBigInt(e.timestampNs);
     if (e.haltId !== undefined) {
       this.clearHaltById.run({
-        id: e.haltId,
+        haltId: e.haltId,
         clearedAtNs: nsForSqlite(ts),
         clearedBy: e.clearedBy,
         clearedReason: e.clearedReason ?? null,
