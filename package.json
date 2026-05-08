@@ -16,7 +16,9 @@
     "iterate:analyze": "npx tsx src/strategies/iterate.ts analyze",
     "iterate:markets": "npx tsx src/strategies/iterate.ts markets",
     "redeem": "npx tsx src/core/limitless/redeem.ts",
-    "conviction-sniper": "tsx src/strategies/conviction-sniper/run.ts"
+    "conviction-sniper": "tsx src/strategies/conviction-sniper/run.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "prediction-markets",
@@ -38,5 +40,9 @@
     "tsx": "^4.0.0",
     "typescript": "^5.5.0",
     "viem": "^2.20.0"
+  },
+  "devDependencies": {
+    "@vitest/ui": "^4.1.5",
+    "vitest": "^4.1.5"
   }
 }
