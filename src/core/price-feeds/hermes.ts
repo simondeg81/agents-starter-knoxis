@@ -51,6 +51,8 @@ interface PriceUpdate {
 export class HermesClient extends EventEmitter {
     private eventSource: EventSource | null = null;
     private prices: Map<string, { price: number; timestamp: number; conf: number }> = new Map();
+    private priceHistory: Map<string, Array<{ ts: number; price: number }>> = new Map();
+    private historyMaxAgeMs = 4 * 60 * 60 * 1000;
     private connected = false;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private readonly baseUrl = 'https://hermes.pyth.network/v2/updates/price/stream';
@@ -132,6 +134,7 @@ export class HermesClient extends EventEmitter {
             const timestamp = priceData.publish_time * 1000; // Convert to ms
 
             this.prices.set(asset, { price, timestamp, conf });
+            this.appendHistory(asset, price);
             this.emit('price', { asset, price, conf, timestamp });
 
             logger.debug({ asset, price, conf }, 'Price update');
@@ -150,6 +153,48 @@ export class HermesClient extends EventEmitter {
      */
     getPrice(asset: string): { price: number; timestamp: number; conf: number } | null {
         return this.prices.get(asset.toUpperCase()) || null;
+    }
+
+    /**
+     * Append a price observation to the rolling history buffer and prune
+     * entries older than historyMaxAgeMs. now is injectable for tests.
+     */
+    private appendHistory(asset: string, price: number, now: number = Date.now()): void {
+        const arr = this.priceHistory.get(asset) ?? [];
+        arr.push({ ts: now, price });
+        const cutoff = now - this.historyMaxAgeMs;
+        while (arr.length > 0 && arr[0]!.ts < cutoff) arr.shift();
+        this.priceHistory.set(asset, arr);
+    }
+
+    /**
+     * Return price drift from a given window-start timestamp, using the
+     * earliest history entry at-or-before windowOpenMs as the baseline.
+     * Returns null if no history covers windowOpenMs. Emits a stale
+     * event (and logs warn) when the newest history entry is > 90s old.
+     */
+    getDeltaFromWindowOpen(asset: string, windowOpenMs: number): {
+        delta: number; deltaPct: number; priceAtOpen: number; priceNow: number
+    } | null {
+        const key = asset.toUpperCase();
+        const arr = this.priceHistory.get(key);
+        if (!arr || arr.length === 0) return null;
+        const newest = arr[arr.length - 1]!;
+        const ageMs = Date.now() - newest.ts;
+        if (ageMs > 90_000) {
+            logger.warn({ asset: key, ageMs }, 'Hermes price stale');
+            this.emit('stale', { asset: key, ageMs });
+        }
+        let priceAtOpen: number | null = null;
+        for (const entry of arr) {
+            if (entry.ts <= windowOpenMs) priceAtOpen = entry.price;
+            else break;
+        }
+        if (priceAtOpen === null) return null;
+        const priceNow = newest.price;
+        const delta = priceNow - priceAtOpen;
+        const deltaPct = priceAtOpen === 0 ? 0 : delta / priceAtOpen;
+        return { delta, deltaPct, priceAtOpen, priceNow };
     }
 
     /**
