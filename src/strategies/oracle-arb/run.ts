@@ -35,9 +35,13 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
 async function main() {
     // Validate env
+    const DRY_RUN = process.env.DRY_RUN === 'true';
     if (!process.env.PRIVATE_KEY) {
-        console.error('ERROR: PRIVATE_KEY not set in .env');
-        process.exit(1);
+        if (!DRY_RUN) {
+            console.error('ERROR: PRIVATE_KEY not set in .env (set DRY_RUN=true to run without signing)');
+            process.exit(1);
+        }
+        console.warn('WARN: PRIVATE_KEY not set — DRY_RUN mode, signing disabled');
     }
 
     if (!process.env.LIMITLESS_API_KEY) {
