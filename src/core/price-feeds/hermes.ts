@@ -105,8 +105,15 @@ export class HermesClient extends EventEmitter {
             }
         };
 
-        this.eventSource.onerror = (err) => {
-            logger.error({ err }, 'Hermes SSE error');
+        this.eventSource.onerror = (err: any) => {
+            // Surface real HTTP status / transport error per chat-23 W3
+            // audit (PR #9). The eventsource package's error event carries
+            // .status for HTTP-level failures and .message for transport-
+            // level ones. readyState: 0=connecting, 1=open, 2=closed.
+            const status = err?.status;
+            const message = err?.message;
+            const readyState = this.eventSource?.readyState;
+            logger.error({ status, message, readyState, err }, 'Hermes SSE error');
             this.connected = false;
             // Do NOT emit('error') — unhandled EventEmitter 'error' events kill the process.
             // scheduleReconnect handles recovery.
