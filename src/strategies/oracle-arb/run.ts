@@ -45,8 +45,11 @@ async function main() {
     }
 
     if (!process.env.LIMITLESS_API_KEY) {
-        console.error('ERROR: LIMITLESS_API_KEY not set in .env');
-        process.exit(1);
+        if (!DRY_RUN) {
+            console.error('ERROR: LIMITLESS_API_KEY not set in .env (set DRY_RUN=true to run with public-only data)');
+            process.exit(1);
+        }
+        console.warn('WARN: LIMITLESS_API_KEY not set — DRY_RUN mode, public-only access');
     }
 
     const dryRun = process.env.DRY_RUN !== 'false';
