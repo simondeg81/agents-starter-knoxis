@@ -35,6 +35,26 @@ export interface OracleArbConfig extends StrategyConfig {
     maxPositions: number; // Max concurrent positions
     minMinutesToExpiry: number; // Min time before market expires
     maxMinutesToExpiry: number; // Max time before market expires
+    minDeltaPct?: number; // Min absolute drift to fire (e.g., 0.001 = 0.1%)
+}
+
+export const SLUG_DIRECTIONAL_RE = /^[a-z0-9]+-up-or-down-\d+-(mins?|minutes?|hour|day)-\d+$/;
+
+export function parseTimeframeSecs(slug: string): number | null {
+    const m = slug.match(/-up-or-down-(\d+)-(mins?|minutes?|hour|day)-/);
+    if (!m) return null;
+    const n = parseInt(m[1]!, 10);
+    const unit = m[2]!;
+    if (unit.startsWith('min')) return n * 60;
+    if (unit === 'hour') return n * 3600;
+    if (unit === 'day') return n * 86400;
+    return null;
+}
+
+export function parseWindowStart(market: { slug?: string; expirationTimestamp?: number }): number | null {
+    const tfSecs = parseTimeframeSecs(market.slug || '');
+    if (!tfSecs || !market.expirationTimestamp) return null;
+    return market.expirationTimestamp - (tfSecs * 1000);
 }
 
 interface PositionRecord {
@@ -279,21 +299,43 @@ export class OracleArbStrategy extends BaseStrategy {
                     
                     validMarkets++;
 
-                    // Parse strike price
-                    const strike = this.parseStrikePrice(market);
-                    if (!strike) continue;
+                    // Slug-pattern guard: only directional up/down markets
+                    if (!SLUG_DIRECTIONAL_RE.test(market.slug || '')) {
+                        skippedMarkets++;
+                        continue;
+                    }
 
-                    // Get market prices
+                    // Window-start = expirationTimestamp - timeframeSecs
+                    // (NOT the slug's trailing epoch_ms, which is creation/refresh time)
+                    const windowStart = parseWindowStart(market);
+                    if (!windowStart) {
+                        skippedMarkets++;
+                        continue;
+                    }
+
+                    // Drift from window-open via Hermes rolling buffer (PR #3)
+                    const driftData = this.hermes.getDeltaFromWindowOpen(asset, windowStart);
+                    if (!driftData) continue;
+                    const { deltaPct, priceAtOpen } = driftData;
+
+                    const minDelta = config.minDeltaPct ?? 0.001;
+                    if (Math.abs(deltaPct) < minDelta) {
+                        skippedMarkets++;
+                        continue;
+                    }
+
+                    // Confidence ported from Polymarket latency_engine.py:546:
+                    //   confidence = min(88, 55 + abs(delta) * 5000) / 100
+                    const confidence = Math.min(0.88, 0.55 + Math.abs(deltaPct) * 5000);
+
+                    // Direction: positive drift => UP outcome (YES) more likely
+                    const oracleYesProb = deltaPct > 0
+                        ? Math.min(0.95, 0.5 + confidence * 0.5)
+                        : Math.max(0.05, 0.5 - confidence * 0.5);
+
                     const yesPrice = market.prices?.[0] ?? 0.5;
                     const noPrice = market.prices?.[1] ?? 0.5;
 
-                    // Calculate oracle's probability assessment
-                    const percentFromStrike = (oraclePrice - strike) / strike;
-                    const oracleYesProb = percentFromStrike > 0
-                        ? Math.min(0.95, 0.5 + Math.abs(percentFromStrike) * 40)
-                        : Math.max(0.05, 0.5 - Math.abs(percentFromStrike) * 40);
-
-                    // Calculate edge
                     const yesEdge = oracleYesProb - yesPrice;
                     const noEdge = (1 - oracleYesProb) - noPrice;
 
@@ -301,7 +343,8 @@ export class OracleArbStrategy extends BaseStrategy {
                         market: market.slug,
                         asset,
                         oraclePrice,
-                        strike,
+                        priceAtOpen,
+                        deltaPct: (deltaPct * 100).toFixed(2) + '%',
                         yesPrice,
                         noPrice,
                         oracleYesProb,
@@ -353,7 +396,8 @@ export class OracleArbStrategy extends BaseStrategy {
                             action: 'BUY YES',
                             market: market.title,
                             oraclePrice,
-                            strike,
+                            priceAtOpen,
+                            deltaPct: (deltaPct * 100).toFixed(2) + '%',
                             yesPrice,
                             askPrice: (askPrice * 100).toFixed(1) + '¢',
                             fokPrice: fokPrice + '¢',
@@ -371,7 +415,7 @@ export class OracleArbStrategy extends BaseStrategy {
                             priceLimit: fokPrice,
                             confidence: oracleYesProb,
                             ladder,
-                            reason: `Oracle: ${asset} $${oraclePrice.toFixed(2)} > $${strike} strike (${(oracleYesProb * 100).toFixed(0)}% prob). Market YES at ${(yesPrice * 100).toFixed(0)}¢`,
+                            reason: `Oracle: ${asset} +${(deltaPct * 100).toFixed(2)}% drift since window open (${(oracleYesProb * 100).toFixed(0)}% prob). YES at ${(yesPrice * 100).toFixed(0)}¢`,
                         });
 
                         // Track as pending position (will confirm on fill)
@@ -435,7 +479,8 @@ export class OracleArbStrategy extends BaseStrategy {
                             action: 'BUY NO',
                             market: market.title,
                             oraclePrice,
-                            strike,
+                            priceAtOpen,
+                            deltaPct: (deltaPct * 100).toFixed(2) + '%',
                             noPrice,
                             noAskPrice: (noAskPrice * 100).toFixed(1) + '¢',
                             fokPrice: fokPrice + '¢',
@@ -453,7 +498,7 @@ export class OracleArbStrategy extends BaseStrategy {
                             priceLimit: fokPrice,
                             confidence: noConf,
                             ladder,
-                            reason: `Oracle: ${asset} $${oraclePrice.toFixed(2)} < $${strike} strike (${(noConf * 100).toFixed(0)}% prob). Market NO at ${(noPrice * 100).toFixed(0)}¢`,
+                            reason: `Oracle: ${asset} ${(deltaPct * 100).toFixed(2)}% drift since window open (${(noConf * 100).toFixed(0)}% prob). NO at ${(noPrice * 100).toFixed(0)}¢`,
                         });
 
                         this.positions.set(market.slug, {
@@ -601,27 +646,6 @@ export class OracleArbStrategy extends BaseStrategy {
             pnlUsd: 0, // Would need resolution tracking
             lastTickDurationMs: 0,
         };
-    }
-
-    private parseStrikePrice(market: any): number | null {
-        // Try metadata first
-        if (market.metadata?.openPrice) {
-            return parseFloat(market.metadata.openPrice);
-        }
-
-        // Parse from title: "$DOGE above $0.09712 on Feb 13"
-        const match = market.title?.match(/\$?([\d.]+)\s+on/i);
-        if (match) {
-            return parseFloat(match[1]);
-        }
-
-        // Try another pattern: "above $X.XX"
-        const match2 = market.title?.match(/above\s+\$?([\d.]+)/i);
-        if (match2) {
-            return parseFloat(match2[1]);
-        }
-
-        return null;
     }
 
     private async loadPositions(): Promise<void> {

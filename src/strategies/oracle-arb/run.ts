@@ -76,15 +76,17 @@ async function main() {
         // 0.30 = don't buy if the market thinks there's <30% chance we win
         minMarketPrice: parseFloat(process.env.ORACLE_MIN_PRICE || '0.30'),
         // Max price to pay per contract (0-1)
-        maxMarketPrice: parseFloat(process.env.ORACLE_MAX_PRICE || '0.65'),
+        maxMarketPrice: parseFloat(process.env.ORACLE_MAX_PRICE || '0.85'),
         // Bet size per trade in USD
         betSizeUsd: parseFloat(process.env.ORACLE_BET_SIZE || '1'),
         // Max concurrent positions
         maxPositions: parseInt(process.env.ORACLE_MAX_POSITIONS || '10'),
         // Only trade markets expiring in this window (minutes)
-        // Set min to 0 to catch markets right up to expiry
-        minMinutesToExpiry: parseInt(process.env.ORACLE_MIN_MINUTES || '0'),
+        // Default min=1 gives ~60s settlement headroom on 5-min markets
+        minMinutesToExpiry: parseInt(process.env.ORACLE_MIN_MINUTES || '1'),
         maxMinutesToExpiry: parseInt(process.env.ORACLE_MAX_MINUTES || '90'),
+        // Min absolute drift since window-open to fire (e.g., 0.001 = 0.1%)
+        minDeltaPct: parseFloat(process.env.ORACLE_MIN_DELTA || '0.001'),
     };
 
     logger.info({
